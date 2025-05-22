@@ -26,7 +26,7 @@ jobs:
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-          GITHUB_ACTIONS: 'true'
+          ACTIONS_RUNNER: 'true'
         run: python course.py
 
 ---
@@ -57,7 +57,7 @@ jobs:
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-          GITHUB_EVENT_NAME: ${{ github.event_name }}
-          GITHUB_EVENT_PAYLOAD: ${{ toJson(github.event) }}
-          GITHUB_ACTIONS: 'true'
+          EVENT_NAME: ${{ github.event_name }}
+          EVENT_PAYLOAD: ${{ toJson(github.event) }}
+          ACTIONS_RUNNER: 'true'
         run: python course.py
