@@ -1,33 +1,20 @@
-name: Course Scraper
-
+name: User Course Request
 on:
-  schedule:
-    
-      - cron: '0 12 * * *'  # 12:00 PM UTC = 5:30 PM IST
-
-    # Run every day at 11.00 PM UTC
-  workflow_dispatch:        # Optional manual trigger
-
+  repository_dispatch:
+    types: [user_request]
 jobs:
-  scrape:
+  process-request:
     runs-on: ubuntu-latest
-
     steps:
-      - uses: actions/checkout@v3
-
-      - name: Set up Python
-        uses: actions/setup-python@v4
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v4
         with:
-          python-version: '3.9'
-
-      - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install -r requirements.txt
-
-      - name: Run scraper
+          python-version: '3.11'
+      - run: pip install requests beautifulsoup4 python-telegram-bot
+      - run: python course.py
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          GITHUB_EVENT_NAME: ${{ github.event_name }}
+          GITHUB_EVENT_PAYLOAD: ${{ toJson(github.event) }}
           GITHUB_ACTIONS: 'true'
-        run: python course.py
