@@ -17,14 +17,13 @@ try:
     from telegram.error import TelegramError
 except ImportError:
     import subprocess
-
     subprocess.check_call(['pip', 'install', 'python-telegram-bot'])
     from telegram import Bot, Update
     from telegram.ext import Application, CommandHandler, MessageHandler, filters
     from telegram.error import TelegramError
 
-# Configuration
-TELEGRAM_BOT_TOKEN = "7833928371:AAFcWWJ8XBT7Z_GXcKw7wTrPWqdDRemcEHs"
+# Configuration - Replace with your actual values
+TELEGRAM_BOT_TOKEN = "7111801798:AAF_5EVvMyIUZgISrIqGHT4zRWgTjlWM2L8"
 TELEGRAM_CHAT_ID = "2132787978"
 DELAY_SECONDS = 1
 MAX_RETRIES = 3
@@ -50,10 +49,8 @@ CATEGORY_MAPPING = {
     'music': 'music',
     'lifestyle': 'lifestyle',
     'health': 'health',
-    'fitness': 'health',
-    'categories': 'help'  # Special case to show categories
+    'fitness': 'health'
 }
-
 
 class UdemyCouponScraper:
     def __init__(self, base_url="https://couponscorpion.com"):
@@ -65,18 +62,18 @@ class UdemyCouponScraper:
             'Accept-Language': 'en-US,en;q=0.9',
             'Referer': base_url
         })
-
+        
         # Cache for storing daily courses by category
         self.daily_courses_cache = {}
         self.cache_date = None
-
+        
         if VERBOSE_DEBUG:
             print(f"Initialized scraper with base URL: {base_url}")
 
     def get_page_content(self, url, max_retries=3):
         if VERBOSE_DEBUG:
             print(f"Fetching page: {url}")
-
+        
         for attempt in range(max_retries):
             try:
                 response = self.session.get(url, timeout=15, allow_redirects=True)
@@ -89,7 +86,7 @@ class UdemyCouponScraper:
                 if VERBOSE_DEBUG:
                     print(f"Error fetching page (attempt {attempt + 1}/{max_retries}): {e}")
                 time.sleep(wait_time)
-
+        
         if VERBOSE_DEBUG:
             print(f"Failed to fetch page after {max_retries} attempts: {url}")
         return None
@@ -98,183 +95,41 @@ class UdemyCouponScraper:
         courses = []
         soup = BeautifulSoup(html_content, 'html.parser')
         course_containers = soup.find_all('div', class_='news-community clearfix')
-
+        
         if VERBOSE_DEBUG:
             print(f"Found {len(course_containers)} course containers")
-
+        
         for index, container in enumerate(course_containers):
             try:
                 title_element = container.find('h2').find('a')
                 if not title_element:
                     continue
-
+                
                 title = title_element.text.strip()
                 course_url = title_element['href']
-
+                
                 description_element = container.find('p', class_=lambda x: x and ('font90' in x or 'mobfont80' in x))
                 description = description_element.text.strip() if description_element else "No description available"
-
+                
                 if title and course_url:
                     if not course_url.startswith('http'):
                         course_url = urljoin(self.base_url, course_url)
-
+                    
                     courses.append({
                         'title': title,
                         'url': course_url,
                         'description': description,
                     })
-
+                    
                     if VERBOSE_DEBUG:
                         print(f"Extracted course {index + 1}: {title}")
             except Exception as e:
                 if VERBOSE_DEBUG:
                     print(f"Error extracting course {index + 1}: {e}")
                 continue
-
-        return courses
-
-    def get_udemy_url_from_course_page(self, course_url):
-        if VERBOSE_DEBUG:
-            print(f"Getting Udemy URL from course page: {course_url}")
-
-        html_content = self.get_page_content(course_url)
-        if not html_content:
-            return None
-
-        soup = BeautifulSoup(html_content, 'html.parser')
-        coupon_link = soup.find('a', class_='btn_offer_block re_track_btn')
-
-        if coupon_link and 'href' in coupon_link.attrs:
-            redirect_url = coupon_link['href']
-            redirect_url = redirect_url.replace('&amp;', '&')
-            final_url = self.follow_redirect(redirect_url)
-            return final_url
-
-        return None
-
-    def follow_redirect(self, url, max_redirects=5):
-        try:
-            response = self.session.get(url, allow_redirects=False, timeout=15)
-            redirect_count = 0
-            current_url = url
-
-            while redirect_count < max_redirects and (response.status_code in (301, 302, 303, 307, 308)):
-                if 'Location' not in response.headers:
-                    break
-
-                next_url = response.headers['Location']
-                if not next_url.startswith('http'):
-                    parsed_url = urlparse(current_url)
-                    base = f"{parsed_url.scheme}://{parsed_url.netloc}"
-                    next_url = urljoin(base, next_url)
-
-                current_url = next_url
-                response = self.session.get(current_url, allow_redirects=False, timeout=15)
-                redirect_count += 1
-                time.sleep(0.5)
-
-            if 'udemy.com' in current_url:
-                return current_url
-
-            if response.status_code == 200:
-                soup = BeautifulSoup(response.text, 'html.parser')
-                meta_refresh = soup.find('meta', attrs={'http-equiv': 'refresh'})
-                if meta_refresh and 'content' in meta_refresh.attrs:
-                    content = meta_refresh['content']
-                    url_match = re.search(r'URL=(.+)', content, re.IGNORECASE)
-                    if url_match:
-                        refresh_url = url_match.group(1)
-                        if 'udemy.com' in refresh_url:
-                            return refresh_url
-
-            return current_url if 'udemy.com' in current_url else None
-
-        except Exception as e:
-            if VERBOSE_DEBUG:
-                print(f"Error following redirect: {e}")
-            return None
-
-    def extract_coupon_code(self, url):
-        if not url:
-            return None
-
-        coupon_patterns = [
-            r'couponCode=([A-Z0-9]+)',
-            r'coupon=([A-Z0-9]+)',
-            r'code=([A-Z0-9]+)',
-            r'promo=([A-Z0-9]+)',
-            r'promocode=([A-Z0-9]+)'
-        ]
-
-        for pattern in coupon_patterns:
-            url_match = re.search(pattern, url, re.IGNORECASE)
-            if url_match:
-                code = url_match.group(1)
-                return code
-
-        return None
-
-    def detect_page_url_format(self, category):
-        test_url = f"{self.base_url}/category/{category}/page/2/"
-        content = self.get_page_content(test_url)
-        if content and "<title>Page not found" not in content:
-            return "category"
-
-        test_url = f"{self.base_url}/{category}/page/2/"
-        content = self.get_page_content(test_url)
-        if content and "<title>Page not found" not in content:
-            return "direct"
-
-        return "none"
-
-    def scrape_category_courses(self, category, max_pages=2):
-        """Scrape courses for a specific category"""
-        courses = []
-
-        # Check if we have cached data for today
-        today = datetime.now().strftime("%Y-%m-%d")
-        if self.cache_date == today and category in self.daily_courses_cache:
-            return self.daily_courses_cache[category]
-
-        url_format = self.detect_page_url_format(category)
-
-        for page_num in range(1, max_pages + 1):
-            if page_num == 1:
-                page_url = f"{self.base_url}/{category}/"
-            else:
-                if url_format == "category":
-                    page_url = f"{self.base_url}/category/{category}/page/{page_num}/"
-                elif url_format == "direct":
-                    page_url = f"{self.base_url}/{category}/page/{page_num}/"
-                else:
-                    break
-
-            html_content = self.get_page_content(page_url)
-            if not html_content or "<title>Page not found" in html_content:
-                break
-
-            page_courses = self.extract_courses(html_content)
-            if not page_courses:
-                break
-
-            for course in page_courses:
-                udemy_url = self.get_udemy_url_from_course_page(course['url'])
-                if udemy_url:
-                    course['udemy_url'] = udemy_url
-                    course['coupon_code'] = self.extract_coupon_code(udemy_url)
-                    courses.append(course)
-
-                time.sleep(random.uniform(0.5, 1))
-
-        # Cache the results
-        if self.cache_date != today:
-            self.daily_courses_cache = {}
-            self.cache_date = today
-
-        self.daily_courses_cache[category] = courses
-        return courses
-
+        
     def scrape_udemy_courses(self, category="development", start_page=1, max_pages=3, verbose=False):
+        """Main scraping method for scheduled scraping (for GitHub Actions)"""
         all_courses = []
         telegram_messages = []
         total_links = 0
@@ -338,8 +193,9 @@ class UdemyCouponScraper:
                         )
 
                         telegram_messages.append(message)
-                        print(f"{course['title']} - {udemy_url}")
-                        print("-" * 80)
+                        if verbose or VERBOSE_DEBUG:
+                            print(f"{course['title']} - {udemy_url}")
+                            print("-" * 80)
 
                 except Exception as e:
                     if verbose or VERBOSE_DEBUG:
@@ -354,181 +210,295 @@ class UdemyCouponScraper:
 
         return all_courses, telegram_messages
 
-    def save_results(self, courses, json_filename="udemy_courses.json", csv_filename="udemy_courses.csv"):
-        with open(json_filename, 'w', encoding='utf-8') as f:
-            json.dump(courses, f, indent=2, ensure_ascii=False)
+    def get_udemy_url_from_course_page(self, course_url):
+        if VERBOSE_DEBUG:
+            print(f"Getting Udemy URL from course page: {course_url}")
+        
+        html_content = self.get_page_content(course_url)
+        if not html_content:
+            return None
+        
+        soup = BeautifulSoup(html_content, 'html.parser')
+        coupon_link = soup.find('a', class_='btn_offer_block re_track_btn')
+        
+        if coupon_link and 'href' in coupon_link.attrs:
+            redirect_url = coupon_link['href']
+            redirect_url = redirect_url.replace('&amp;', '&')
+            final_url = self.follow_redirect(redirect_url)
+            return final_url
+        
+        return None
 
-        with open(csv_filename, 'w', newline='', encoding='utf-8') as f:
-            csv_writer = csv.writer(f)
-            header = ['Title', 'Description', 'Udemy URL', 'Coupon Code']
-            csv_writer.writerow(header)
+    def follow_redirect(self, url, max_redirects=5):
+        try:
+            response = self.session.get(url, allow_redirects=False, timeout=15)
+            redirect_count = 0
+            current_url = url
+            
+            while redirect_count < max_redirects and (response.status_code in (301, 302, 303, 307, 308)):
+                if 'Location' not in response.headers:
+                    break
+                
+                next_url = response.headers['Location']
+                if not next_url.startswith('http'):
+                    parsed_url = urlparse(current_url)
+                    base = f"{parsed_url.scheme}://{parsed_url.netloc}"
+                    next_url = urljoin(base, next_url)
+                
+                current_url = next_url
+                response = self.session.get(current_url, allow_redirects=False, timeout=15)
+                redirect_count += 1
+                time.sleep(0.5)
+            
+            if 'udemy.com' in current_url:
+                return current_url
+            
+            if response.status_code == 200:
+                soup = BeautifulSoup(response.text, 'html.parser')
+                meta_refresh = soup.find('meta', attrs={'http-equiv': 'refresh'})
+                if meta_refresh and 'content' in meta_refresh.attrs:
+                    content = meta_refresh['content']
+                    url_match = re.search(r'URL=(.+)', content, re.IGNORECASE)
+                    if url_match:
+                        refresh_url = url_match.group(1)
+                        if 'udemy.com' in refresh_url:
+                            return refresh_url
+            
+            return current_url if 'udemy.com' in current_url else None
+            
+        except Exception as e:
+            if VERBOSE_DEBUG:
+                print(f"Error following redirect: {e}")
+            return None
 
-            for course in courses:
-                row = [
-                    course['title'],
-                    course['description'],
-                    course.get('udemy_url', 'N/A'),
-                    course.get('coupon_code', 'N/A')
-                ]
-                csv_writer.writerow(row)
+    def extract_coupon_code(self, url):
+        if not url:
+            return None
+        
+        coupon_patterns = [
+            r'couponCode=([A-Z0-9]+)',
+            r'coupon=([A-Z0-9]+)',
+            r'code=([A-Z0-9]+)',
+            r'promo=([A-Z0-9]+)',
+            r'promocode=([A-Z0-9]+)'
+        ]
+        
+        for pattern in coupon_patterns:
+            url_match = re.search(pattern, url, re.IGNORECASE)
+            if url_match:
+                code = url_match.group(1)
+                return code
+        
+        return None
 
+    def detect_page_url_format(self, category):
+        test_url = f"{self.base_url}/category/{category}/page/2/"
+        content = self.get_page_content(test_url)
+        if content and "<title>Page not found" not in content:
+            return "category"
+        
+        test_url = f"{self.base_url}/{category}/page/2/"
+        content = self.get_page_content(test_url)
+        if content and "<title>Page not found" not in content:
+            return "direct"
+        
+        return "none"
+
+    def scrape_category_courses(self, category, max_pages=2):
+        """Scrape courses for a specific category"""
+        courses = []
+        
+        # Check if we have cached data for today
+        today = datetime.now().strftime("%Y-%m-%d")
+        if self.cache_date == today and category in self.daily_courses_cache:
+            return self.daily_courses_cache[category]
+        
+        url_format = self.detect_page_url_format(category)
+        
+        for page_num in range(1, max_pages + 1):
+            if page_num == 1:
+                page_url = f"{self.base_url}/{category}/"
+            else:
+                if url_format == "category":
+                    page_url = f"{self.base_url}/category/{category}/page/{page_num}/"
+                elif url_format == "direct":
+                    page_url = f"{self.base_url}/{category}/page/{page_num}/"
+                else:
+                    break
+            
+            html_content = self.get_page_content(page_url)
+            if not html_content or "<title>Page not found" in html_content:
+                break
+            
+            page_courses = self.extract_courses(html_content)
+            if not page_courses:
+                break
+            
+            for course in page_courses:
+                udemy_url = self.get_udemy_url_from_course_page(course['url'])
+                if udemy_url:
+                    course['udemy_url'] = udemy_url
+                    course['coupon_code'] = self.extract_coupon_code(udemy_url)
+                    courses.append(course)
+                
+                time.sleep(random.uniform(0.5, 1))
+        
+        # Cache the results
+        if self.cache_date != today:
+            self.daily_courses_cache = {}
+            self.cache_date = today
+        
+        self.daily_courses_cache[category] = courses
+        return courses
 
 # Global scraper instance
 scraper = UdemyCouponScraper()
-
 
 async def start_command(update: Update, context):
     """Handle /start command"""
     welcome_message = """
 🤖 <b>Welcome to Free Udemy Courses Bot!</b>
 
+Created by <b>Mohamed Asif</b> - App Developer & Cybersecurity Enthusiast
+🌐 Portfolio: https://asifappdev.tech/
+
 I can help you find today's free Udemy courses in different categories.
 
-<b>Available commands:</b>
-• Type <code>ui</code> or <code>design</code> - Get UI/UX Design courses
-• Type <code>app</code> or <code>mobile</code> - Get Mobile App Development courses  
-• Type <code>web</code> or <code>development</code> - Get Web Development courses
-• Type <code>marketing</code> - Get Marketing courses
-• Type <code>business</code> - Get Business courses
-• Type <code>photography</code> - Get Photography courses
+<b>🚀 Super Easy to Use:</b>
+Just type any of these words and I'll get courses instantly:
 
-Just send me any of these keywords and I'll fetch today's free courses for you! 🚀
+• Type <code>ui</code> or <code>design</code> → Get UI/UX Design courses
+• Type <code>web</code> or <code>development</code> → Get Web Development courses  
+• Type <code>app</code> or <code>mobile</code> → Get Mobile App courses
+• Type <code>marketing</code> → Get Marketing courses
+• Type <code>business</code> → Get Business courses
+• Type <code>photography</code> → Get Photography courses
+
+<b>Commands also work:</b>
+• <code>/help</code> - Show detailed help
+• <code>/categories</code> - Show all categories
+
+<b>Example:</b> Just type <code>web</code> and I'll automatically fetch today's free web development courses! 🎯
 
 <i>Note: This bot works in private messages only.</i>
 """
-
+    
     await update.message.reply_text(welcome_message, parse_mode='HTML')
-
 
 async def help_command(update: Update, context):
     """Handle /help command"""
     help_message = """
 <b>🔥 Free Udemy Courses Bot - Help</b>
 
-<b>How to use:</b>
-1. Send me a category keyword (like 'ui', 'web', 'app')
-2. I'll fetch today's free courses for that category
-3. Click on the course links to enroll for free!
+<b>Created by Mohamed Asif</b>
+🌐 Portfolio: https://asifappdev.tech/
 
-<b>Available categories:</b>
-• <code>/ui</code> or <code>ui</code> → UI/UX Design courses
-• <code>/app</code> or <code>app</code> → Mobile Development
-• <code>/web</code> or <code>web</code> → Web Development
-• <code>/marketing</code> or <code>marketing</code> → Digital Marketing courses
-• <code>/business</code> or <code>business</code> → Business & Entrepreneurship
-• <code>/photography</code> or <code>photography</code> → Photography courses
+<b>🚀 Super Simple to Use:</b>
+Just type a category name and I'll automatically get today's free courses!
 
-<b>Commands:</b>
-• <code>/categories</code> - Show detailed category list
-• <code>/help</code> - Show this help message
+<b>Available categories (just type the word):</b>
+• <code>ui</code> or <code>design</code> → UI/UX Design courses
+• <code>app</code> or <code>mobile</code> → Mobile Development
+• <code>web</code> or <code>development</code> → Web Development
+• <code>marketing</code> → Digital Marketing courses
+• <code>business</code> → Business & Entrepreneurship
+• <code>photography</code> → Photography courses
+
+<b>Commands also work:</b>
+• <code>/categories</code> → Show all available categories
+• <code>/help</code> → Show this help message
 
 <b>Examples:</b>
-- Send "/ui" or "ui" to get design courses
-- Send "/web" or "web" to get web development courses
-- Send "/app" or "app" to get mobile development courses
+- Type <code>ui</code> → I'll get design courses automatically
+- Type <code>web</code> → I'll get web development courses
+- Type <code>app</code> → I'll get mobile development courses
+
+<b>How it works:</b>
+1. You type a category (like "web")
+2. I automatically search and fetch today's free courses
+3. I send you all the course details with direct links!
 
 💡 <i>Tip: Courses are updated daily, so check back regularly!</i>
 """
-
+    
     await update.message.reply_text(help_message, parse_mode='HTML')
-
 
 async def categories_command(update: Update, context):
     """Handle /categories command"""
     categories_message = """
 📚 <b>Available Course Categories:</b>
 
+<b>🚀 Just type any of these words and I'll get courses automatically:</b>
+
 🎨 <b>Design & UI/UX:</b>
-• <code>/ui</code> or <code>ui</code> - UI/UX Design courses
-• <code>/design</code> or <code>design</code> - General design courses
+• Type <code>ui</code> → UI/UX Design courses
+• Type <code>design</code> → General design courses
 
 📱 <b>Mobile Development:</b>
-• <code>/app</code> or <code>app</code> - Mobile app development
-• <code>/mobile</code> or <code>mobile</code> - Mobile development
+• Type <code>app</code> → Mobile app development
+• Type <code>mobile</code> → Mobile development
 
 💻 <b>Web Development:</b>
-• <code>/web</code> or <code>web</code> - Web development courses
-• <code>/development</code> or <code>development</code> - Programming courses
+• Type <code>web</code> → Web development courses
+• Type <code>development</code> → Programming courses
 
 📈 <b>Business & Marketing:</b>
-• <code>/marketing</code> or <code>marketing</code> - Digital marketing
-• <code>/business</code> or <code>business</code> - Business & entrepreneurship
+• Type <code>marketing</code> → Digital marketing
+• Type <code>business</code> → Business & entrepreneurship
 
 📸 <b>Creative:</b>
-• <code>/photography</code> or <code>photography</code> - Photography courses
+• Type <code>photography</code> → Photography courses
 
 <b>💡 How to use:</b>
-Just send me any category keyword (with or without /) and I'll fetch today's free courses!
+Just type any category word (like "web" or "ui") and I'll automatically fetch today's free courses!
 
-<i>Example: Send "ui" or "/ui" to get design courses</i>
+<b>Examples:</b>
+- Type "ui" → Get design courses instantly
+- Type "web" → Get web development courses  
+- Type "app" → Get mobile app courses
+
+<b>Created by Mohamed Asif</b> - App Developer & Cybersecurity Enthusiast
+🌐 https://asifappdev.tech/
 """
-
+    
     await update.message.reply_text(categories_message, parse_mode='HTML')
 
-
-async def handle_category_request(update: Update, context):
-    """Handle category requests from users"""
-    user_message = update.message.text.lower().strip()
-    chat_type = update.effective_chat.type
-
-    # Only respond to private messages
-    if chat_type != 'private':
-        return
-
-    # Remove leading slash if present (for command-style requests)
-    if user_message.startswith('/'):
-        user_message = user_message[1:]
-
-    # Check if the message matches any category
-    if user_message == 'categories':
-        await categories_command(update, context)
-        return
-
-    category = CATEGORY_MAPPING.get(user_message)
-
-    if not category:
-        # If not a recognized category, show help
-        await update.message.reply_text(
-            "🤔 I didn't understand that category. Use /help to see available categories.",
-            parse_mode='HTML'
-        )
-        return
-
+async def fetch_and_send_courses(update: Update, category: str, user_input: str):
+    """Fetch and send courses for a given category"""
     # Show loading message
     loading_msg = await update.message.reply_text(
         f"🔍 <b>Searching for today's free {category} courses...</b>\n\n<i>This might take a moment...</i>",
         parse_mode='HTML'
     )
-
+    
     try:
         # Scrape courses for the requested category
         courses = scraper.scrape_category_courses(category, max_pages=2)
-
+        
         if not courses:
             await loading_msg.edit_text(
-                f"😔 <b>No free {category} courses found today.</b>\n\nTry checking back later or try another category!",
+                f"😔 <b>No free {category} courses found today.</b>\n\nTry checking back later or try another category!\n\n<b>Available categories:</b> ui, web, app, marketing, business, photography",
                 parse_mode='HTML'
             )
             return
-
+        
         # Delete loading message
         await loading_msg.delete()
-
+        
         # Send header message
         current_date = datetime.now().strftime("%Y-%m-%d")
-        header_msg = f"🔥 <b>FREE {category.upper()} COURSES TODAY</b> - {current_date}\n\n<i>Found {len(courses)} free courses for you!</i>"
+        header_msg = f"🔥 <b>FREE {category.upper()} COURSES TODAY</b> - {current_date}\n\n<i>Found {len(courses)} free courses for you!</i>\n\n<b>Requested by:</b> {user_input}"
         await update.message.reply_text(header_msg, parse_mode='HTML')
-
+        
         # Send course messages (limit to 10 courses to avoid spam)
         for i, course in enumerate(courses[:10]):
             description = course['description']
             if description and len(description) > 150:
                 description = description[:147] + "..."
-
+            
             desc_text = f"📝 <i>{description}</i>\n\n" if description else ""
-            coupon_text = f"🎟️ <b>Coupon:</b> <code>{course['coupon_code']}</code>\n" if course.get(
-                'coupon_code') else ""
-
+            coupon_text = f"🎟️ <b>Coupon:</b> <code>{course['coupon_code']}</code>\n" if course.get('coupon_code') else ""
+            
             message = (
                 f"🎓 <b>{course['title']}</b>\n\n"
                 f"{desc_text}"
@@ -536,27 +506,91 @@ async def handle_category_request(update: Update, context):
                 f"{coupon_text}"
                 f"#{category.capitalize()}Course #{i + 1}"
             )
-
+            
             await update.message.reply_text(message, parse_mode='HTML', disable_web_page_preview=True)
-
+            
             # Small delay to avoid rate limiting
             await asyncio.sleep(1)
-
+        
         # Send summary
         if len(courses) > 10:
-            summary_msg = f"📊 <b>Summary:</b> Showed top 10 out of {len(courses)} available courses.\n\n💡 <i>Come back tomorrow for fresh courses!</i>"
+            summary_msg = f"📊 <b>Summary:</b> Showed top 10 out of {len(courses)} available courses.\n\n💡 <i>Type another category like 'ui', 'web', or 'app' for more courses!</i>"
         else:
-            summary_msg = f"✅ <b>That's all for today's {category} courses!</b>\n\n💡 <i>Come back tomorrow for fresh courses!</i>"
-
+            summary_msg = f"✅ <b>That's all for today's {category} courses!</b>\n\n💡 <i>Type another category like 'ui', 'web', or 'app' for more courses!</i>"
+        
         await update.message.reply_text(summary_msg, parse_mode='HTML')
-
+        
     except Exception as e:
         await loading_msg.edit_text(
             f"❌ <b>Error fetching courses:</b>\n<i>{str(e)}</i>\n\nPlease try again later.",
             parse_mode='HTML'
         )
-        print(f"Error in handle_category_request: {e}")
+        print(f"Error in fetch_and_send_courses: {e}")
 
+async def category_command_handler(update: Update, context):
+    """Handle specific category commands like /ui, /web, etc."""
+    command = update.message.text.lower().strip()
+    chat_type = update.effective_chat.type
+    
+    # Only respond to private messages
+    if chat_type != 'private':
+        await update.message.reply_text(
+            "🔒 <b>Private Messages Only</b>\n\nPlease message me directly to get courses. I don't respond in groups.",
+            parse_mode='HTML'
+        )
+        return
+    
+    # Remove leading slash
+    if command.startswith('/'):
+        command = command[1:]
+    
+    # Map command to category
+    category = CATEGORY_MAPPING.get(command)
+    
+    if not category:
+        await update.message.reply_text(
+            "🤔 I didn't understand that category. Try typing: ui, web, app, marketing, business, or photography",
+            parse_mode='HTML'
+        )
+        return
+    
+    await fetch_and_send_courses(update, category, f"/{command}")
+
+async def handle_text_messages(update: Update, context):
+    """Handle simple text messages like 'ui', 'web', 'app' etc."""
+    chat_type = update.effective_chat.type
+    
+    # Only respond to private messages
+    if chat_type != 'private':
+        return
+    
+    user_message = update.message.text.lower().strip()
+    
+    # Check if the message matches any category
+    category = CATEGORY_MAPPING.get(user_message)
+    
+    if category:
+        # User sent a valid category keyword - fetch courses automatically
+        await fetch_and_send_courses(update, category, user_message)
+    else:
+        # Unknown message - show help
+        unknown_msg = """
+🤔 <b>I didn't understand that.</b>
+
+<b>Try sending me:</b>
+• <code>ui</code> or <code>design</code> - For UI/UX courses
+• <code>web</code> or <code>development</code> - For Web Development
+• <code>app</code> or <code>mobile</code> - For Mobile App courses
+• <code>marketing</code> - For Marketing courses
+• <code>business</code> - For Business courses
+• <code>photography</code> - For Photography courses
+
+Or use commands like <code>/help</code> for more options! 😊
+
+<b>Example:</b> Just type <code>web</code> and I'll get today's free web courses!
+"""
+        
+        await update.message.reply_text(unknown_msg, parse_mode='HTML')
 
 async def test_telegram_connection(bot_token, chat_id):
     try:
@@ -576,9 +610,7 @@ async def test_telegram_connection(bot_token, chat_id):
         print(f"❌ Telegram connection test failed: {e}")
         return False
 
-
-async def send_to_telegram_group(message, bot_token=TELEGRAM_BOT_TOKEN, chat_id=TELEGRAM_CHAT_ID, retry_count=0,
-                                 max_retries=3):
+async def send_to_telegram_group(message, bot_token=TELEGRAM_BOT_TOKEN, chat_id=TELEGRAM_CHAT_ID, retry_count=0, max_retries=3):
     try:
         bot = Bot(token=bot_token)
         await bot.send_message(
@@ -602,17 +634,16 @@ async def send_to_telegram_group(message, bot_token=TELEGRAM_BOT_TOKEN, chat_id=
         print(f"Unexpected error sending to Telegram: {e}")
         return False
 
-
 async def run_telegram_operations(messages, bot_token=TELEGRAM_BOT_TOKEN, chat_id=TELEGRAM_CHAT_ID):
     connection_ok = await test_telegram_connection(bot_token, chat_id)
     if not connection_ok:
         print("Telegram connection failed. Skipping message sending.")
         return
-
+    
     print(f"Starting to send {len(messages)} messages to Telegram...")
     success_count = 0
     failure_count = 0
-
+    
     for idx, msg in enumerate(messages, 1):
         print(f"Sending message {idx}/{len(messages)}...")
         success = await send_to_telegram_group(msg, bot_token, chat_id)
@@ -622,9 +653,8 @@ async def run_telegram_operations(messages, bot_token=TELEGRAM_BOT_TOKEN, chat_i
         else:
             failure_count += 1
             await asyncio.sleep(random.uniform(6.0, 10.0))
-
+    
     print(f"\nFinal results - Messages sent: {success_count}, Failed: {failure_count}")
-
 
 def get_chat_id(chat_id_input):
     if chat_id_input.startswith('-100'):
@@ -636,90 +666,86 @@ def get_chat_id(chat_id_input):
         return chat_id_input
     return chat_id_input
 
-
 async def run_bot_webhook():
     """Run the bot to listen for private messages"""
     print("Starting Telegram Bot for private message handling...")
-
+    
     application = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
-
-    # Add handlers
+    
+    # Add command handlers
     application.add_handler(CommandHandler("start", start_command))
     application.add_handler(CommandHandler("help", help_command))
     application.add_handler(CommandHandler("categories", categories_command))
-
-    # Add command handlers for each category
+    
+    # Add specific category command handlers
     for category_key in CATEGORY_MAPPING.keys():
-        if category_key not in ['categories']:  # Skip special cases
-            application.add_handler(CommandHandler(category_key, handle_category_request))
-
-    # Handle text messages (non-command style)
-    application.add_handler(
-        MessageHandler(filters.TEXT & filters.ChatType.PRIVATE & ~filters.COMMAND, handle_category_request))
-
+        application.add_handler(CommandHandler(category_key, category_command_handler))
+    
+    # Handle text messages (non-command) for automatic course fetching
+    application.add_handler(MessageHandler(filters.TEXT & filters.ChatType.PRIVATE & ~filters.COMMAND, handle_text_messages))
+    
     # Start the bot
     await application.initialize()
     await application.start()
-
+    
     print("✅ Bot is running and listening for messages...")
-
+    print("Send /start to your bot to test it!")
+    
     # Keep the bot running
     try:
         await application.updater.start_polling()
         # Keep running until interrupted
         import signal
         stop_event = asyncio.Event()
-
+        
         def signal_handler():
             stop_event.set()
-
+        
         for sig in (signal.SIGTERM, signal.SIGINT):
             signal.signal(sig, lambda s, f: signal_handler())
-
+        
         await stop_event.wait()
-
+    
     finally:
         await application.updater.stop()
         await application.stop()
         await application.shutdown()
 
-
 async def scheduled_scraping():
     """Run the scheduled scraping for the group (for GitHub Actions)"""
     print("Starting Udemy Coupon Scraper (Scheduled Mode)")
-
+    
     if TELEGRAM_BOT_TOKEN == "YOUR_BOT_TOKEN" or TELEGRAM_CHAT_ID == "YOUR_GROUP_ID":
         print("ERROR: Please set your Telegram bot token and group ID in the script!")
         return
-
+    
     chat_id = get_chat_id(TELEGRAM_CHAT_ID)
-
+    
     category = "development"
     max_pages = 1
     print(f"\nScraping the '{category}' category for {max_pages} pages...")
-
+    
     courses, telegram_messages = scraper.scrape_udemy_courses(
         category=category,
         max_pages=max_pages,
         verbose=True
     )
-
+    
     if courses:
         json_file = f"udemy_courses_{category}.json"
         csv_file = f"udemy_courses_{category}.csv"
         scraper.save_results(courses, json_filename=json_file, csv_filename=csv_file)
         print(f"Saved course data to {json_file} and {csv_file}")
-
+    
     if telegram_messages:
         print(f"Sending {len(telegram_messages)} messages to Telegram...")
         await run_telegram_operations(telegram_messages, TELEGRAM_BOT_TOKEN, chat_id)
         print("Completed sending messages to Telegram!")
 
-
 async def main():
     """Main function - determines whether to run as bot or scheduled scraper"""
     import sys
-
+    
     # Check if running in bot mode or scheduled mode
     if len(sys.argv) > 1 and sys.argv[1] == "bot":
         # Run as interactive bot
@@ -727,7 +753,6 @@ async def main():
     else:
         # Run as scheduled scraper (default for GitHub Actions)
         await scheduled_scraping()
-
 
 if __name__ == "__main__":
     try:
