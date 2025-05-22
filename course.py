@@ -7,10 +7,12 @@ from telegram.ext import Application, CommandHandler, MessageHandler, filters
 
 TELEGRAM_BOT_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN', "7833928371:AAFcWWJ8XBT7Z_GXcKw7wTrPWqdDRemcEHs")
 TELEGRAM_CHAT_ID = os.getenv('TELEGRAM_CHAT_ID', "2132787978")
-GITHUB_TOKEN = os.getenv('GITHUB_TOKEN')
-GITHUB_REPO = os.getenv('GITHUB_REPO', "your-username/your-repo-name")
+GITHUB_TOKEN = "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"
+GITHUB_REPO = 'MohamedAsif07/coursedev1'
 
-CATEGORIES = {'ui': 'design', 'app': 'mobile', 'web': 'development', 'marketing': 'marketing', 'business': 'business', 'photography': 'photography'}
+CATEGORIES = {'ui': 'design', 'app': 'mobile', 'web': 'development', 'marketing': 'marketing', 'business': 'business',
+              'photography': 'photography'}
+
 
 class UdemyScraper:
     def __init__(self):
@@ -81,7 +83,7 @@ class UdemyScraper:
         html = self.get_page(page_url)
         if not html:
             return courses
-        
+
         page_courses = self.extract_courses(html)
         for course in page_courses[:8]:
             udemy_url = self.get_udemy_url(course['url'])
@@ -92,12 +94,14 @@ class UdemyScraper:
             time.sleep(1)
         return courses
 
+
 scraper = UdemyScraper()
+
 
 async def trigger_github_action(category, user_id):
     if not GITHUB_TOKEN:
         return False
-    
+
     url = f"https://api.github.com/repos/{GITHUB_REPO}/dispatches"
     headers = {
         'Authorization': f'token {GITHUB_TOKEN}',
@@ -111,12 +115,13 @@ async def trigger_github_action(category, user_id):
             'timestamp': datetime.now().isoformat()
         }
     }
-    
+
     try:
         response = requests.post(url, headers=headers, json=data)
         return response.status_code == 204
     except:
         return False
+
 
 async def start_command(update: Update, context):
     message = """🤖 <b>Free Udemy Courses Bot</b>
@@ -135,50 +140,54 @@ Created by <b>Mohamed Asif</b> - App Developer & Cybersecurity Enthusiast
 <i>Private messages only</i>"""
     await update.message.reply_text(message, parse_mode='HTML')
 
+
 async def category_handler(update: Update, context):
     if update.effective_chat.type != 'private':
         await update.message.reply_text("🔒 Private messages only", parse_mode='HTML')
         return
-    
+
     command = update.message.text.lower().strip().replace('/', '')
     category = CATEGORIES.get(command)
-    
+
     if not category:
         await update.message.reply_text("❌ Unknown category. Use /start for help.", parse_mode='HTML')
         return
-    
+
     user_id = update.effective_user.id
     loading_msg = await update.message.reply_text(f"🔍 <b>Getting {category} courses...</b>", parse_mode='HTML')
-    
+
     if os.getenv('GITHUB_ACTIONS'):
         courses = scraper.scrape_category(category)
         await send_courses_to_user(update, courses, category, user_id)
     else:
         triggered = await trigger_github_action(category, user_id)
         if triggered:
-            await loading_msg.edit_text(f"⚡ Processing your {category} request...\nCourses will be sent shortly!", parse_mode='HTML')
+            await loading_msg.edit_text(f"⚡ Processing your {category} request...\nCourses will be sent shortly!",
+                                        parse_mode='HTML')
         else:
             courses = scraper.scrape_category(category)
             await send_courses_to_user(update, courses, category, user_id)
-    
+
     await loading_msg.delete()
+
 
 async def send_courses_to_user(update, courses, category, user_id):
     if not courses:
         await update.message.reply_text(f"😔 No {category} courses found today.", parse_mode='HTML')
         return
-    
+
     date = datetime.now().strftime("%Y-%m-%d")
     header = f"🔥 <b>{category.upper()} COURSES - {date}</b>\nFound {len(courses)} courses!"
     await update.message.reply_text(header, parse_mode='HTML')
-    
+
     for i, course in enumerate(courses[:6], 1):
         desc = course['description'][:100] + "..." if len(course['description']) > 100 else course['description']
         coupon = f"🎟️ <code>{course['coupon_code']}</code>\n" if course.get('coupon_code') else ""
-        
+
         msg = f"🎓 <b>{course['title']}</b>\n\n📝 {desc}\n\n🌐 <a href='{course['udemy_url']}'>Enroll Free</a>\n{coupon}#{category} #{i}"
         await update.message.reply_text(msg, parse_mode='HTML', disable_web_page_preview=True)
         await asyncio.sleep(1)
+
 
 async def process_github_webhook():
     payload = json.loads(os.getenv('GITHUB_EVENT_PAYLOAD', '{}'))
@@ -186,29 +195,31 @@ async def process_github_webhook():
         client_payload = payload.get('client_payload', {})
         category = client_payload.get('category')
         user_id = client_payload.get('user_id')
-        
+
         if category and user_id:
             courses = scraper.scrape_category(category)
             await send_courses_directly(user_id, courses, category)
 
+
 async def send_courses_directly(user_id, courses, category):
     bot = Bot(token=TELEGRAM_BOT_TOKEN)
-    
+
     if not courses:
         await bot.send_message(chat_id=user_id, text=f"😔 No {category} courses found today.", parse_mode='HTML')
         return
-    
+
     date = datetime.now().strftime("%Y-%m-%d")
     header = f"🔥 <b>{category.upper()} COURSES - {date}</b>\nFound {len(courses)} courses!"
     await bot.send_message(chat_id=user_id, text=header, parse_mode='HTML')
-    
+
     for i, course in enumerate(courses[:6], 1):
         desc = course['description'][:100] + "..." if len(course['description']) > 100 else course['description']
         coupon = f"🎟️ <code>{course['coupon_code']}</code>\n" if course.get('coupon_code') else ""
-        
+
         msg = f"🎓 <b>{course['title']}</b>\n\n📝 {desc}\n\n🌐 <a href='{course['udemy_url']}'>Enroll Free</a>\n{coupon}#{category} #{i}"
         await bot.send_message(chat_id=user_id, text=msg, parse_mode='HTML', disable_web_page_preview=True)
         await asyncio.sleep(1)
+
 
 async def scheduled_group_post():
     courses = scraper.scrape_category('development')
@@ -217,18 +228,19 @@ async def scheduled_group_post():
         date = datetime.now().strftime("%Y-%m-%d")
         header = f"🔥 <b>DAILY FREE COURSES - {date}</b>\n{len(courses)} Development courses!"
         await bot.send_message(chat_id=TELEGRAM_CHAT_ID, text=header, parse_mode='HTML')
-        
+
         for course in courses[:5]:
             desc = course['description'][:120] + "..." if len(course['description']) > 120 else course['description']
             coupon = f"🎟️ <code>{course['coupon_code']}</code>\n" if course.get('coupon_code') else ""
-            
+
             msg = f"🎓 <b>{course['title']}</b>\n\n📝 {desc}\n\n🌐 <a href='{course['udemy_url']}'>Enroll Free</a>\n{coupon}#FreeCourse"
             await bot.send_message(chat_id=TELEGRAM_CHAT_ID, text=msg, parse_mode='HTML')
             await asyncio.sleep(2)
 
+
 async def main():
     import sys
-    
+
     if os.getenv('GITHUB_EVENT_NAME') == 'repository_dispatch':
         await process_github_webhook()
     elif len(sys.argv) > 1 and sys.argv[1] == "bot":
@@ -237,23 +249,24 @@ async def main():
         for cat in CATEGORIES.keys():
             app.add_handler(CommandHandler(cat, category_handler))
         app.add_handler(MessageHandler(filters.TEXT & filters.ChatType.PRIVATE, category_handler))
-        
+
         await app.initialize()
         await app.start()
         print("✅ Bot running...")
         await app.updater.start_polling()
-        
+
         import signal
         stop = asyncio.Event()
         for sig in (signal.SIGTERM, signal.SIGINT):
             signal.signal(sig, lambda s, f: stop.set())
         await stop.wait()
-        
+
         await app.updater.stop()
         await app.stop()
         await app.shutdown()
     else:
         await scheduled_group_post()
+
 
 if __name__ == "__main__":
     asyncio.run(main())
