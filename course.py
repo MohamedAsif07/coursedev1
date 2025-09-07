@@ -46,13 +46,10 @@ class UdemyCouponScraper:
             'Accept-Language': 'en-US,en;q=0.9',
             'Referer': base_url
         })
-        # Get today's date for filtering
-        self.today_date = datetime.now().strftime("%B %d, %Y").replace(" 0", " ")  # Format like "May 20, 2025"
         
         # Add debugging info
         if VERBOSE_DEBUG:
             print(f"Initialized scraper with base URL: {base_url}")
-            print(f"Today's date for filtering: {self.today_date}")
 
     def get_page_content(self, url, max_retries=3):
         if VERBOSE_DEBUG:
@@ -85,28 +82,17 @@ class UdemyCouponScraper:
 
         for index, container in enumerate(course_containers):
             try:
-                # Extract publication date
+                # Extract publication date (but don't filter by it)
                 date_meta = container.find('div', class_='meta post-meta')
+                publication_date = "Unknown"
                 
-                # Skip if we can't find date metadata
-                if not date_meta:
-                    if VERBOSE_DEBUG:
-                        print(f"Skipping course {index + 1}: No date metadata found")
-                    continue
+                if date_meta:
+                    date_span = date_meta.find('span', class_='date_meta')
+                    if date_span:
+                        publication_date = date_span.text.strip()
                 
-                date_span = date_meta.find('span', class_='date_meta')
-                if not date_span:
-                    if VERBOSE_DEBUG:
-                        print(f"Skipping course {index + 1}: No date span found")
-                    continue
-                
-                publication_date = date_span.text.strip()
-                
-                # Skip if not today's course
-                if publication_date != self.today_date:
-                    if VERBOSE_DEBUG:
-                        print(f"Skipping course {index + 1}: Not published today (date: {publication_date})")
-                    continue
+                if VERBOSE_DEBUG:
+                    print(f"Processing course {index + 1} with date: {publication_date}")
                 
                 title_element = container.find('h2').find('a')
                 if not title_element:
@@ -130,7 +116,7 @@ class UdemyCouponScraper:
                     })
 
                     if VERBOSE_DEBUG:
-                        print(f"Extracted today's course {index + 1}: {title}")
+                        print(f"Extracted course {index + 1}: {title}")
                         print(f"  - URL: {course_url}")
                         print(f"  - Date: {publication_date}")
             except Exception as e:
@@ -139,7 +125,7 @@ class UdemyCouponScraper:
                 continue
 
         if VERBOSE_DEBUG:
-            print(f"Found {len(courses)} courses published today")
+            print(f"Found {len(courses)} courses from all dates")
             
         return courses
 
@@ -305,14 +291,14 @@ class UdemyCouponScraper:
                 # No pagination detected, shouldn't reach here for page > 1
                 return f"{self.base_url}/{category}/"
 
-    def scrape_udemy_courses(self, category="personal-development", start_page=1, max_pages=3, verbose=False):
+    def scrape_udemy_courses(self, category="personal-development", start_page=1, max_pages=5, verbose=False):
         all_courses = []
         telegram_messages = []
         total_links = 0
         valid_links = 0
 
         current_date = datetime.now().strftime("%Y-%m-%d")
-        summary_message = f"🔥 <b>TODAY'S FREE UDEMY {category.upper()} COURSES</b> - {current_date} 🔥\n\n<i>Finding today's latest free courses for you...</i>"
+        summary_message = f"🔥 <b>FREE UDEMY {category.upper()} COURSES</b> - {current_date} 🔥\n\n<i>Finding the latest free courses for you...</i>"
         telegram_messages.append(summary_message)
 
         # Detect the correct URL format for this category
@@ -320,7 +306,7 @@ class UdemyCouponScraper:
         
         if VERBOSE_DEBUG:
             print(f"Detected URL format: {url_format}")
-            print(f"Searching for courses published today: {self.today_date}")
+            print(f"Searching for all courses (not filtering by date)")
 
         for page_num in range(start_page, start_page + max_pages):
             if verbose or VERBOSE_DEBUG:
@@ -347,12 +333,12 @@ class UdemyCouponScraper:
             courses = self.extract_courses(html_content)
             if not courses:
                 if verbose or VERBOSE_DEBUG:
-                    print(f"No today's courses found on page {page_num}.")
-                # Continue to next page instead of stopping since we're filtering by date
+                    print(f"No courses found on page {page_num}.")
+                # Continue to next page to check for more courses
                 continue
 
             if verbose or VERBOSE_DEBUG:
-                print(f"Found {len(courses)} today's courses on page {page_num}")
+                print(f"Found {len(courses)} courses on page {page_num}")
 
             for i, course in enumerate(courses):
                 try:
@@ -390,8 +376,9 @@ class UdemyCouponScraper:
                             f"{description}"
                             f"🌐 <a href='{udemy_url}'>Enroll Now (Free)</a>\n"
                             f"{coupon_text}"
+                            f"📅 <i>Published: {course['publication_date']}</i>\n"
                             f"📢 Share with friends who want to learn!\n\n"
-                            f"#TodaysFreeCourse #Udemy #{category.capitalize().replace('-', '')} #OnlineLearning #PersonalDevelopment"
+                            f"#FreeCourse #Udemy #{category.capitalize().replace('-', '')} #OnlineLearning #PersonalDevelopment"
                         )
 
                         telegram_messages.append(message)
@@ -418,15 +405,15 @@ class UdemyCouponScraper:
                 time.sleep(page_delay)
 
         if verbose or VERBOSE_DEBUG:
-            print(f"Total today's Udemy links processed: {total_links}")
-            print(f"Valid today's Udemy links found: {valid_links}")
+            print(f"Total Udemy links processed: {total_links}")
+            print(f"Valid Udemy links found: {valid_links}")
             print(f"Invalid/empty links: {total_links - valid_links}")
 
         if valid_links > 0:
-            summary = f"✅ <b>Today's Free {category.capitalize().replace('-', ' ')} Courses Update</b>\n\nJust shared {valid_links} free Udemy courses published TODAY ({self.today_date})! Grab them while they last.\n\n#TodaysUdemy #FreshCourses #{category.capitalize().replace('-', '')} #PersonalDevelopment"
+            summary = f"✅ <b>Free {category.capitalize().replace('-', ' ')} Courses Update</b>\n\nJust shared {valid_links} free Udemy courses from pages 1-{max_pages}! Grab them while they last.\n\n#UdemyFree #FreshCourses #{category.capitalize().replace('-', '')} #PersonalDevelopment"
             telegram_messages.append(summary)
         else:
-            summary = f"ℹ️ <b>No New {category.capitalize().replace('-', ' ')} Courses Today</b>\n\nNo new free Udemy courses found for today ({self.today_date}). Check back later!\n\n#UdemyUpdate #{category.capitalize().replace('-', '')} #PersonalDevelopment"
+            summary = f"ℹ️ <b>No {category.capitalize().replace('-', ' ')} Courses Found</b>\n\nNo free Udemy courses found in pages 1-{max_pages}. Check back later!\n\n#UdemyUpdate #{category.capitalize().replace('-', '')} #PersonalDevelopment"
             telegram_messages.append(summary)
 
         return all_courses, telegram_messages
@@ -577,10 +564,10 @@ def get_chat_id(chat_id_input):
 
 
 async def main():
-    print("Starting Improved Udemy Coupon Scraper - PERSONAL DEVELOPMENT (ALL COURSES)")
-    print("============================================================================")
+    print("Starting Udemy Coupon Scraper - PERSONAL DEVELOPMENT (Pages 1-5)")
+    print("================================================================")
     print(f"Current date: {datetime.now().strftime('%B %d, %Y')}")
-    print("============================================================================")
+    print("================================================================")
 
     if TELEGRAM_BOT_TOKEN == "YOUR_BOT_TOKEN" or TELEGRAM_CHAT_ID == "YOUR_GROUP_ID":
         print("ERROR: Please set your Telegram bot token and group ID in the script!")
@@ -589,26 +576,26 @@ async def main():
     chat_id = get_chat_id(TELEGRAM_CHAT_ID)
     scraper = UdemyCouponScraper()
 
-    # CHANGED: Updated category to "personal-development"
     category = "personal-development"
 
-    # Scraping 6 pages as requested
-    max_pages = 6
-    print(f"\nScraping the '{category}' category for {max_pages} pages (ALL COURSES, not just today)...")
+    # Scraping pages 1-5 as requested
+    max_pages = 5
+    print(f"\nScraping the '{category}' category for pages 1-{max_pages} (ALL COURSES)...")
     print(f"Using human-like delays: {PAGE_TRANSITION_DELAY} seconds between pages, {COURSE_PROCESSING_DELAY} seconds between courses")
-    print("============================================================================")
+    print("================================================================")
 
     courses, telegram_messages = scraper.scrape_udemy_courses(
         category=category,
+        start_page=1,  # Start from page 1
         max_pages=max_pages,
-        verbose=True  # More verbose output
+        verbose=True
     )
 
     valid_courses = [c for c in courses if 'udemy_url' in c and c['udemy_url'] and 'udemy.com/course/' in c['udemy_url']]
     
     if valid_courses:
-        json_file = f"udemy_courses_{category}_all.json"
-        csv_file = f"udemy_courses_{category}_all.csv"
+        json_file = f"udemy_courses_{category}_pages_1-5.json"
+        csv_file = f"udemy_courses_{category}_pages_1-5.csv"
         scraper.save_results(valid_courses, json_filename=json_file, csv_filename=csv_file)
         print(f"\nSaved {len(valid_courses)} valid course data to {json_file} and {csv_file}")
     else:
