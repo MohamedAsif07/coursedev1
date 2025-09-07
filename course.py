@@ -22,8 +22,8 @@ except ImportError:
     from telegram.error import TelegramError
 
 # Configuration
-TELEGRAM_BOT_TOKEN = "7111801798:AAF_5EVvMyIUZgISrIqGHT4zRWgTjlWM2L8"  # Get this from BotFather
-TELEGRAM_CHAT_ID = "-4836448524"  # Replace with your group's numerical ID (not the URL)
+TELEGRAM_BOT_TOKEN = "8092208949:AAHsHcBUJ9AGFD2h34qiHbGek6pR4mf99Zo"  # Get this from BotFather
+TELEGRAM_CHAT_ID = "-1002552787335"  # Replace with your group's numerical ID (not the URL)
 
 # Increased delay between pages to act more human-like
 PAGE_TRANSITION_DELAY = 5  # 5 seconds delay between pages
@@ -578,10 +578,10 @@ def get_chat_id(chat_id_input):
 
 
 async def main():
-    print("Starting Improved Udemy Coupon Scraper (TODAY ONLY) - PERSONAL DEVELOPMENT")
-    print("=========================================================================")
-    print(f"Today's date: {datetime.now().strftime('%B %d, %Y')}")
-    print("=========================================================================")
+    print("Starting Improved Udemy Coupon Scraper - PERSONAL DEVELOPMENT (ALL COURSES)")
+    print("============================================================================")
+    print(f"Current date: {datetime.now().strftime('%B %d, %Y')}")
+    print("============================================================================")
 
     if TELEGRAM_BOT_TOKEN == "YOUR_BOT_TOKEN" or TELEGRAM_CHAT_ID == "YOUR_GROUP_ID":
         print("ERROR: Please set your Telegram bot token and group ID in the script!")
@@ -593,11 +593,11 @@ async def main():
     # CHANGED: Updated category to "personal-development"
     category = "personal-development"
 
-    # Increased max pages to improve chances of finding today's courses
+    # Scraping 6 pages as requested
     max_pages = 6
-    print(f"\nScraping the '{category}' category for {max_pages} pages, filtering for TODAY'S COURSES ONLY...")
+    print(f"\nScraping the '{category}' category for {max_pages} pages (ALL COURSES, not just today)...")
     print(f"Using human-like delays: {PAGE_TRANSITION_DELAY} seconds between pages, {COURSE_PROCESSING_DELAY} seconds between courses")
-    print("=========================================================================")
+    print("============================================================================")
 
     courses, telegram_messages = scraper.scrape_udemy_courses(
         category=category,
@@ -608,12 +608,12 @@ async def main():
     valid_courses = [c for c in courses if 'udemy_url' in c and c['udemy_url'] and 'udemy.com/course/' in c['udemy_url']]
     
     if valid_courses:
-        json_file = f"udemy_courses_{category}_today.json"
-        csv_file = f"udemy_courses_{category}_today.csv"
+        json_file = f"udemy_courses_{category}_all.json"
+        csv_file = f"udemy_courses_{category}_all.csv"
         scraper.save_results(valid_courses, json_filename=json_file, csv_filename=csv_file)
-        print(f"\nSaved {len(valid_courses)} valid TODAY'S course data to {json_file} and {csv_file}")
+        print(f"\nSaved {len(valid_courses)} valid course data to {json_file} and {csv_file}")
     else:
-        print("\nNo valid TODAY'S courses found to save")
+        print("\nNo valid courses found to save")
 
     # Send messages to Telegram
     if telegram_messages:
