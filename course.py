@@ -1,488 +1,631 @@
-import requests, json, time, random, asyncio, os, re
+import requests
 from bs4 import BeautifulSoup
+import json
+import time
+import random
+import csv
+import os
+import re
+import asyncio
 from urllib.parse import urljoin, urlparse
 from datetime import datetime
-from telegram import Bot, Update
-from telegram.ext import Application, CommandHandler, MessageHandler, filters
 
-TELEGRAM_BOT_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
-TELEGRAM_CHAT_ID = os.getenv('TELEGRAM_CHAT_ID')
-PERSONAL_ACCESS_TOKEN = os.getenv('PERSONAL_ACCESS_TOKEN')
-REPO_NAME = os.getenv('REPO_NAME', 'MohamedAsif07/coursedev1')
+# Telegram imports
+try:
+    from telegram import Bot
+    from telegram.error import TelegramError
+except ImportError:
+    import subprocess
 
-CATEGORIES = {
-    'ui': 'design', 
-    'app': 'mobile', 
-    'web': 'development', 
-    'marketing': 'marketing', 
-    'business': 'business',
-    'photography': 'photography'
-}
+    subprocess.check_call(['pip', 'install', 'python-telegram-bot'])
+    from telegram import Bot
+    from telegram.error import TelegramError
 
-class UdemyScraper:
-    def __init__(self):
+# Configuration
+TELEGRAM_BOT_TOKEN = "7111801798:AAF_5EVvMyIUZgISrIqGHT4zRWgTjlWM2L8"  # Get this from BotFather
+TELEGRAM_CHAT_ID = "-4836448524"  # Replace with your group's numerical ID (not the URL)
+
+# Increased delay between pages to act more human-like
+PAGE_TRANSITION_DELAY = 5  # 5 seconds delay between pages
+# Increased delay between course processing
+COURSE_PROCESSING_DELAY = 5  # 5 seconds delay between courses
+MAX_RETRIES = 3  # Maximum retries for network requests
+VERBOSE_DEBUG = True  # Set to True for more detailed debugging
+# Telegram sending configurations
+TELEGRAM_MAX_RETRIES = 4  # Maximum number of retries for failed messages
+TELEGRAM_INITIAL_DELAY = 5  # Initial delay between messages in seconds
+TELEGRAM_RATE_LIMIT_DELAY = 60  # Delay in seconds when hitting rate limits
+
+
+class UdemyCouponScraper:
+    def __init__(self, base_url="https://couponscorpion.com"):
+        self.base_url = base_url
         self.session = requests.Session()
         self.session.headers.update({
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36',
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8',
+            'Accept-Language': 'en-US,en;q=0.9',
+            'Referer': base_url
         })
-        self.base_url = "https://couponscorpion.com"
+        # Get today's date for filtering
+        self.today_date = datetime.now().strftime("%B %d, %Y").replace(" 0", " ")  # Format like "May 20, 2025"
+        
+        # Add debugging info
+        if VERBOSE_DEBUG:
+            print(f"Initialized scraper with base URL: {base_url}")
+            print(f"Today's date for filtering: {self.today_date}")
 
-    def get_page(self, url):
-        try:
-            response = self.session.get(url, timeout=15)
-            response.raise_for_status()
-            return response.text
-        except Exception as e:
-            print(f"Error fetching {url}: {e}")
-            return None
+    def get_page_content(self, url, max_retries=3):
+        if VERBOSE_DEBUG:
+            print(f"Fetching page: {url}")
 
-    def extract_courses(self, html):
-        soup = BeautifulSoup(html, 'html.parser')
-        courses = []
-        
-        selectors = [
-            'div.news-community.clearfix',
-            'article.post',
-            'div.course-item',
-            'div.coupon-card'
-        ]
-        
-        for selector in selectors:
-            containers = soup.select(selector)
-            if containers:
-                break
-        
-        for container in containers[:10]:
+        for attempt in range(max_retries):
             try:
-                title_elem = container.find('h2') or container.find('h3') or container.find('h4')
-                if not title_elem:
-                    continue
-                    
-                title_link = title_elem.find('a')
-                if not title_link:
-                    continue
-                    
-                title = title_link.get_text(strip=True)
-                url = title_link.get('href', '')
-                
-                if not url.startswith('http'):
-                    url = urljoin(self.base_url, url)
-                
-                desc_elem = container.find('p') or container.find('div', class_='excerpt')
-                desc = desc_elem.get_text(strip=True)[:200] if desc_elem else "Free Udemy Course"
-                
-                if title and url:
-                    courses.append({
-                        'title': title,
-                        'url': url,
-                        'description': desc
-                    })
-            except Exception as e:
-                print(f"Error extracting course: {e}")
-                continue
-        
-        return courses
+                response = self.session.get(url, timeout=15, allow_redirects=True)
+                response.raise_for_status()
+                if VERBOSE_DEBUG:
+                    print(f"Successfully fetched page: {url} (size: {len(response.text)} bytes)")
+                return response.text
+            except requests.exceptions.RequestException as e:
+                wait_time = 2 ** attempt
+                if VERBOSE_DEBUG:
+                    print(f"Error fetching page (attempt {attempt + 1}/{max_retries}): {e}")
+                time.sleep(wait_time)
 
-    def get_udemy_url(self, course_url):
-        try:
-            html = self.get_page(course_url)
-            if not html:
-                return None
-                
-            soup = BeautifulSoup(html, 'html.parser')
-            
-            selectors = [
-                'a.btn_offer_block',
-                'a[href*="udemy.com"]',
-                'a.coupon-btn',
-                'a.btn-primary'
-            ]
-            
-            for selector in selectors:
-                link = soup.select_one(selector)
-                if link and link.get('href'):
-                    redirect_url = link['href'].replace('&amp;', '&')
-                    final_url = self.follow_redirects(redirect_url)
-                    if final_url and 'udemy.com' in final_url:
-                        return final_url
-            
-            return None
-        except Exception as e:
-            print(f"Error getting Udemy URL: {e}")
-            return None
-
-    def follow_redirects(self, url, max_redirects=5):
-        try:
-            for i in range(max_redirects):
-                response = self.session.get(url, allow_redirects=False, timeout=10)
-                
-                if response.status_code in [200, 404]:
-                    return url
-                elif response.status_code in [301, 302, 303, 307, 308]:
-                    location = response.headers.get('Location')
-                    if not location:
-                        break
-                    if not location.startswith('http'):
-                        location = urljoin(url, location)
-                    url = location
-                    time.sleep(0.3)
-                else:
-                    break
-            
-            return url if 'udemy.com' in url else None
-        except Exception as e:
-            print(f"Error following redirects: {e}")
-            return None
-
-    def extract_coupon(self, url):
-        if not url:
-            return None
-        patterns = [
-            r'couponCode=([A-Z0-9]+)',
-            r'coupon=([A-Z0-9]+)', 
-            r'code=([A-Z0-9]+)',
-            r'/([A-Z0-9]{6,})/?(?:\?|$)'
-        ]
-        for pattern in patterns:
-            match = re.search(pattern, url, re.IGNORECASE)
-            if match:
-                return match.group(1)
+        if VERBOSE_DEBUG:
+            print(f"Failed to fetch page after {max_retries} attempts: {url}")
         return None
 
-    def scrape_category(self, category):
-        print(f"Scraping {category} courses...")
+    def extract_courses(self, html_content):
         courses = []
-        
-        urls_to_try = [
-            f"{self.base_url}/category/{category}/",
-            f"{self.base_url}/{category}/",
-            f"{self.base_url}/courses/{category}/",
-            f"{self.base_url}"
-        ]
-        
-        for page_url in urls_to_try:
-            html = self.get_page(page_url)
-            if html:
-                page_courses = self.extract_courses(html)
-                if page_courses:
-                    break
-        
-        if not page_courses:
-            print(f"No courses found for {category}")
-            return []
-        
-        for course in page_courses[:6]:
+        soup = BeautifulSoup(html_content, 'html.parser')
+        course_containers = soup.find_all('div', class_='news-community clearfix')
+
+        if VERBOSE_DEBUG:
+            print(f"Found {len(course_containers)} course containers")
+
+        for index, container in enumerate(course_containers):
             try:
-                udemy_url = self.get_udemy_url(course['url'])
-                if udemy_url:
-                    course['udemy_url'] = udemy_url
-                    course['coupon_code'] = self.extract_coupon(udemy_url)
-                    courses.append(course)
-                    print(f"✓ Found: {course['title'][:50]}...")
-                time.sleep(random.uniform(1, 2))
+                # Extract publication date
+                date_meta = container.find('div', class_='meta post-meta')
+                
+                # Skip if we can't find date metadata
+                if not date_meta:
+                    if VERBOSE_DEBUG:
+                        print(f"Skipping course {index + 1}: No date metadata found")
+                    continue
+                
+                date_span = date_meta.find('span', class_='date_meta')
+                if not date_span:
+                    if VERBOSE_DEBUG:
+                        print(f"Skipping course {index + 1}: No date span found")
+                    continue
+                
+                publication_date = date_span.text.strip()
+                
+                # Skip if not today's course
+                if publication_date != self.today_date:
+                    if VERBOSE_DEBUG:
+                        print(f"Skipping course {index + 1}: Not published today (date: {publication_date})")
+                    continue
+                
+                title_element = container.find('h2').find('a')
+                if not title_element:
+                    continue
+
+                title = title_element.text.strip()
+                course_url = title_element['href']
+
+                description_element = container.find('p', class_=lambda x: x and ('font90' in x or 'mobfont80' in x))
+                description = description_element.text.strip() if description_element else "No description available"
+
+                if title and course_url:
+                    if not course_url.startswith('http'):
+                        course_url = urljoin(self.base_url, course_url)
+
+                    courses.append({
+                        'title': title,
+                        'url': course_url,
+                        'description': description,
+                        'publication_date': publication_date
+                    })
+
+                    if VERBOSE_DEBUG:
+                        print(f"Extracted today's course {index + 1}: {title}")
+                        print(f"  - URL: {course_url}")
+                        print(f"  - Date: {publication_date}")
             except Exception as e:
-                print(f"Error processing course: {e}")
+                if VERBOSE_DEBUG:
+                    print(f"Error extracting course {index + 1}: {e}")
                 continue
-        
+
+        if VERBOSE_DEBUG:
+            print(f"Found {len(courses)} courses published today")
+            
         return courses
 
-scraper = UdemyScraper()
+    def get_udemy_url_from_course_page(self, course_url):
+        if VERBOSE_DEBUG:
+            print(f"Getting Udemy URL from course page: {course_url}")
 
-async def trigger_github_action(category, user_id):
-    if not PERSONAL_ACCESS_TOKEN or not REPO_NAME:
-        print("Personal access token or repo not configured")
-        return False
+        html_content = self.get_page_content(course_url)
+        if not html_content:
+            if VERBOSE_DEBUG:
+                print(f"Failed to get content from course page: {course_url}")
+            return None
 
-    url = f"https://api.github.com/repos/{REPO_NAME}/dispatches"
-    headers = {
-        'Authorization': f'token {PERSONAL_ACCESS_TOKEN}',
-        'Accept': 'application/vnd.github.v3+json',
-        'Content-Type': 'application/json'
-    }
-    data = {
-        'event_type': 'user_request',
-        'client_payload': {
-            'category': category,
-            'user_id': str(user_id),
-            'timestamp': datetime.now().isoformat()
-        }
-    }
+        soup = BeautifulSoup(html_content, 'html.parser')
 
-    try:
-        response = requests.post(url, headers=headers, json=data, timeout=10)
-        print(f"GitHub API response: {response.status_code}")
-        return response.status_code == 204
-    except Exception as e:
-        print(f"Error triggering GitHub action: {e}")
-        return False
+        # Extract Udemy link
+        coupon_link = soup.find('a', class_='btn_offer_block re_track_btn')
 
-async def start_command(update: Update, context):
-    message = """🤖 <b>Free Udemy Courses Bot</b>
-
-Created by <b>Mohamed Asif</b> - App Developer
-🌐 Portfolio: https://asifappdev.tech/
-
-<b>Available Commands:</b>
-• /ui - UI/UX Design courses
-• /web - Web Development courses  
-• /app - Mobile App courses
-• /marketing - Marketing courses
-• /business - Business courses
-• /photography - Photography courses
-
-<i>⚠️ Use in private chat only</i>"""
-    
-    await update.message.reply_text(message, parse_mode='HTML')
-
-async def category_handler(update: Update, context):
-    if update.effective_chat.type != 'private':
-        await update.message.reply_text(
-            "🔒 <b>Private Messages Only</b>\n\nPlease message me privately to get courses.",
-            parse_mode='HTML'
-        )
-        return
-
-    command = update.message.text.lower().strip().replace('/', '')
-    category = CATEGORIES.get(command)
-
-    if not category:
-        await update.message.reply_text(
-            "❌ <b>Unknown Command</b>\n\nUse /start to see available categories.",
-            parse_mode='HTML'
-        )
-        return
-
-    user_id = update.effective_user.id
-    
-    loading_msg = await update.message.reply_text(
-        f"🔍 <b>Searching for {category} courses...</b>\n⏳ Please wait...",
-        parse_mode='HTML'
-    )
-
-    try:
-        if os.getenv('ACTIONS_RUNNER') == 'true':
-            courses = scraper.scrape_category(category)
-            await send_courses_to_user(update, courses, category)
-        else:
-            triggered = await trigger_github_action(category, user_id)
-            if triggered:
-                await loading_msg.edit_text(
-                    f"⚡ <b>Processing Request</b>\n\n🔄 Scraping {category} courses...\n📤 Results will be sent shortly!",
-                    parse_mode='HTML'
-                )
-                return
-            else:
-                await loading_msg.edit_text(
-                    f"🔄 <b>Fallback Mode</b>\n\nScraping courses directly...",
-                    parse_mode='HTML'
-                )
-                courses = scraper.scrape_category(category)
-                await send_courses_to_user(update, courses, category)
-        
-        await loading_msg.delete()
-        
-    except Exception as e:
-        print(f"Error in category handler: {e}")
-        await loading_msg.edit_text("❌ Something went wrong. Please try again later.")
-
-async def send_courses_to_user(update, courses, category):
-    if not courses:
-        await update.message.reply_text(
-            f"😔 <b>No {category} courses found</b>\n\nTry again later or check other categories.",
-            parse_mode='HTML'
-        )
-        return
-
-    date = datetime.now().strftime("%B %d, %Y")
-    header = f"🔥 <b>{category.upper()} COURSES</b>\n📅 {date}\n\n✅ Found {len(courses)} free courses!"
-    
-    await update.message.reply_text(header, parse_mode='HTML')
-
-    for i, course in enumerate(courses, 1):
-        try:
-            title = course['title'][:80] + "..." if len(course['title']) > 80 else course['title']
-            desc = course['description'][:150] + "..." if len(course['description']) > 150 else course['description']
+        if coupon_link and 'href' in coupon_link.attrs:
+            redirect_url = coupon_link['href']
+            redirect_url = redirect_url.replace('&amp;', '&')
+            final_url = self.follow_redirect(redirect_url)
             
-            coupon_text = ""
-            if course.get('coupon_code'):
-                coupon_text = f"\n🎟️ Coupon: <code>{course['coupon_code']}</code>"
+            # Verify that we got an actual Udemy course URL (not just udemy.com)
+            if final_url and 'udemy.com/course/' in final_url:
+                if VERBOSE_DEBUG:
+                    print(f"Found valid Udemy URL: {final_url}")
+                return final_url
+            elif final_url and 'udemy.com' in final_url:
+                if VERBOSE_DEBUG:
+                    print(f"Found invalid Udemy URL (not a specific course): {final_url}")
+                return None
+            
+        if VERBOSE_DEBUG:
+            print("No valid Udemy URL found")
+        return None
 
-            msg = f"""🎓 <b>{title}</b>
+    def follow_redirect(self, url, max_redirects=5):
+        if VERBOSE_DEBUG:
+            print(f"Following redirect: {url}")
 
-📝 {desc}
+        try:
+            response = self.session.get(url, allow_redirects=False, timeout=15)
+            redirect_count = 0
+            current_url = url
 
-🌐 <a href='{course['udemy_url']}'>Enroll Free Now</a>{coupon_text}
+            while redirect_count < max_redirects and (response.status_code in (301, 302, 303, 307, 308)):
+                if 'Location' not in response.headers:
+                    if VERBOSE_DEBUG:
+                        print(f"No Location header found in redirect response")
+                    break
 
-#{category} #FreeCourse #{i}"""
+                next_url = response.headers['Location']
+                if not next_url.startswith('http'):
+                    parsed_url = urlparse(current_url)
+                    base = f"{parsed_url.scheme}://{parsed_url.netloc}"
+                    next_url = urljoin(base, next_url)
 
-            await update.message.reply_text(
-                msg, 
-                parse_mode='HTML', 
-                disable_web_page_preview=True
-            )
-            await asyncio.sleep(1)
+                if VERBOSE_DEBUG:
+                    print(f"Redirect {redirect_count + 1}: {next_url}")
+
+                current_url = next_url
+                response = self.session.get(current_url, allow_redirects=False, timeout=15)
+                redirect_count += 1
+                time.sleep(0.5)
+
+            # Check if we're still on the couponscorpion site - likely means an error
+            if 'couponscorpion.com/recommends' in current_url:
+                if VERBOSE_DEBUG:
+                    print(f"Still on couponscorpion redirector page - likely an error")
+                return None
+
+            # Only consider it successful if we're on a specific Udemy course page
+            if 'udemy.com/course/' in current_url:
+                return current_url
+                
+            if response.status_code == 200:
+                soup = BeautifulSoup(response.text, 'html.parser')
+                meta_refresh = soup.find('meta', attrs={'http-equiv': 'refresh'})
+                if meta_refresh and 'content' in meta_refresh.attrs:
+                    content = meta_refresh['content']
+                    url_match = re.search(r'URL=(.+)', content, re.IGNORECASE)
+                    if url_match:
+                        refresh_url = url_match.group(1)
+                        if 'udemy.com/course/' in refresh_url:
+                            if VERBOSE_DEBUG:
+                                print(f"Found Udemy course URL in meta refresh: {refresh_url}")
+                            return refresh_url
+
+            # Return None if we're just on the main Udemy page, not a specific course
+            if current_url == "https://www.udemy.com/":
+                return None
+                
+            return current_url if 'udemy.com/course/' in current_url else None
+
         except Exception as e:
-            print(f"Error sending course {i}: {e}")
-            continue
+            if VERBOSE_DEBUG:
+                print(f"Error following redirect: {e}")
+            return None
 
-async def process_github_webhook():
-    try:
-        payload = json.loads(os.getenv('EVENT_PAYLOAD', '{}'))
-        client_payload = payload.get('client_payload', {})
-        category = client_payload.get('category')
-        user_id = client_payload.get('user_id')
+    def extract_coupon_code(self, url):
+        if not url:
+            return None
 
-        if category and user_id:
-            print(f"Processing webhook request: {category} for user {user_id}")
-            courses = scraper.scrape_category(category)
-            await send_courses_directly(user_id, courses, category)
+        coupon_patterns = [
+            r'couponCode=([A-Z0-9_]+)',
+            r'coupon=([A-Z0-9_]+)',
+            r'code=([A-Z0-9_]+)',
+            r'promo=([A-Z0-9_]+)',
+            r'promocode=([A-Z0-9_]+)'
+        ]
+
+        for pattern in coupon_patterns:
+            url_match = re.search(pattern, url, re.IGNORECASE)
+            if url_match:
+                code = url_match.group(1)
+                if VERBOSE_DEBUG:
+                    print(f"Extracted coupon code: {code} using pattern: {pattern}")
+                return code
+
+        if VERBOSE_DEBUG:
+            print(f"No coupon code found in URL: {url}")
+        return None
+
+    def detect_page_url_format(self, category):
+        """Detect the correct URL format for pagination by checking both possible formats"""
+        # Try the /category/ format first
+        test_url = f"{self.base_url}/category/{category}/page/2/"
+        content = self.get_page_content(test_url)
+        if content and "<title>Page not found" not in content:
+            if VERBOSE_DEBUG:
+                print(f"Detected pagination format: /category/{category}/page/N/")
+            return "category"
+
+        # Fall back to /{category}/page/ format
+        test_url = f"{self.base_url}/{category}/page/2/"
+        content = self.get_page_content(test_url)
+        if content and "<title>Page not found" not in content:
+            if VERBOSE_DEBUG:
+                print(f"Detected pagination format: /{category}/page/N/")
+            return "direct"
+
+        # If both fail, use the default category page (no pagination)
+        if VERBOSE_DEBUG:
+            print(f"Could not detect pagination format, using default category page")
+        return "none"
+
+    def get_url_for_page(self, category, page_num, url_format):
+        """Get the URL for a specific page based on the detected format"""
+        if page_num == 1:
+            # For first page, we have two possible formats
+            if url_format == "category":
+                return f"{self.base_url}/category/{category}/"
+            else:  # "direct" or "none"
+                return f"{self.base_url}/{category}/"
         else:
-            print("Invalid webhook payload")
-    except Exception as e:
-        print(f"Error processing webhook: {e}")
+            # For other pages
+            if url_format == "category":
+                return f"{self.base_url}/category/{category}/page/{page_num}/"
+            elif url_format == "direct":
+                return f"{self.base_url}/{category}/page/{page_num}/"
+            else:
+                # No pagination detected, shouldn't reach here for page > 1
+                return f"{self.base_url}/{category}/"
 
-async def send_courses_directly(user_id, courses, category):
-    try:
-        bot = Bot(token=TELEGRAM_BOT_TOKEN)
+    def scrape_udemy_courses(self, category="personal-development", start_page=1, max_pages=3, verbose=False):
+        all_courses = []
+        telegram_messages = []
+        total_links = 0
+        valid_links = 0
 
-        if not courses:
-            await bot.send_message(
-                chat_id=user_id,
-                text=f"😔 <b>No {category} courses found</b>\n\nTry again later or check other categories.",
-                parse_mode='HTML'
-            )
-            return
+        current_date = datetime.now().strftime("%Y-%m-%d")
+        summary_message = f"🔥 <b>TODAY'S FREE UDEMY {category.upper()} COURSES</b> - {current_date} 🔥\n\n<i>Finding today's latest free courses for you...</i>"
+        telegram_messages.append(summary_message)
 
-        date = datetime.now().strftime("%B %d, %Y")
-        header = f"🔥 <b>{category.upper()} COURSES</b>\n📅 {date}\n\n✅ Found {len(courses)} free courses!"
+        # Detect the correct URL format for this category
+        url_format = self.detect_page_url_format(category)
         
-        await bot.send_message(chat_id=user_id, text=header, parse_mode='HTML')
+        if VERBOSE_DEBUG:
+            print(f"Detected URL format: {url_format}")
+            print(f"Searching for courses published today: {self.today_date}")
 
-        for i, course in enumerate(courses, 1):
-            try:
-                title = course['title'][:80] + "..." if len(course['title']) > 80 else course['title']
-                desc = course['description'][:150] + "..." if len(course['description']) > 150 else course['description']
-                
-                coupon_text = ""
-                if course.get('coupon_code'):
-                    coupon_text = f"\n🎟️ Coupon: <code>{course['coupon_code']}</code>"
+        for page_num in range(start_page, start_page + max_pages):
+            if verbose or VERBOSE_DEBUG:
+                print(f"Scraping page {page_num} of {category}...")
 
-                msg = f"""🎓 <b>{title}</b>
+            # Get the correct URL for this page
+            page_url = self.get_url_for_page(category, page_num, url_format)
+            
+            if VERBOSE_DEBUG:
+                print(f"Using URL: {page_url}")
 
-📝 {desc}
+            html_content = self.get_page_content(page_url)
+            if not html_content:
+                if verbose or VERBOSE_DEBUG:
+                    print(f"Failed to fetch page {page_num}, stopping.")
+                break
 
-🌐 <a href='{course['udemy_url']}'>Enroll Free Now</a>{coupon_text}
+            # Check if returned page is valid (not 404/error page)
+            if "<title>Page not found" in html_content:
+                if verbose or VERBOSE_DEBUG:
+                    print(f"Page {page_num} not found, stopping.")
+                break
 
-#{category} #FreeCourse #{i}"""
-
-                await bot.send_message(
-                    chat_id=user_id,
-                    text=msg,
-                    parse_mode='HTML',
-                    disable_web_page_preview=True
-                )
-                await asyncio.sleep(1)
-            except Exception as e:
-                print(f"Error sending course {i}: {e}")
+            courses = self.extract_courses(html_content)
+            if not courses:
+                if verbose or VERBOSE_DEBUG:
+                    print(f"No today's courses found on page {page_num}.")
+                # Continue to next page instead of stopping since we're filtering by date
                 continue
-                
-    except Exception as e:
-        print(f"Error sending courses directly: {e}")
 
-async def scheduled_group_post():
+            if verbose or VERBOSE_DEBUG:
+                print(f"Found {len(courses)} today's courses on page {page_num}")
+
+            for i, course in enumerate(courses):
+                try:
+                    if verbose or VERBOSE_DEBUG:
+                        print(f"Processing {i + 1}/{len(courses)}: {course['title']}")
+
+                    # Add a human-like delay between processing each course
+                    if i > 0:
+                        delay_time = COURSE_PROCESSING_DELAY + random.uniform(-1, 1)  # 4-6 second delay
+                        if VERBOSE_DEBUG:
+                            print(f"Waiting {delay_time:.1f} seconds before processing next course...")
+                        time.sleep(delay_time)
+
+                    udemy_url = self.get_udemy_url_from_course_page(course['url'])
+
+                    if udemy_url:
+                        course['udemy_url'] = udemy_url
+                        coupon_code = self.extract_coupon_code(udemy_url)
+                        course['coupon_code'] = coupon_code
+
+                        all_courses.append(course)
+                        total_links += 1
+                        valid_links += 1
+
+                        description = course['description']
+                        if description:
+                            if len(description) > 200:
+                                description = description[:197] + "..."
+                            description = f"📝 <i>{description}</i>\n\n"
+
+                        coupon_text = f"🎟️ <b>Coupon Code:</b> <code>{coupon_code}</code>\n" if coupon_code else ""
+
+                        message = (
+                            f"🔥 <b>{course['title']}</b>\n\n"
+                            f"{description}"
+                            f"🌐 <a href='{udemy_url}'>Enroll Now (Free)</a>\n"
+                            f"{coupon_text}"
+                            f"📢 Share with friends who want to learn!\n\n"
+                            f"#TodaysFreeCourse #Udemy #{category.capitalize().replace('-', '')} #OnlineLearning #PersonalDevelopment"
+                        )
+
+                        telegram_messages.append(message)
+
+                        # Print key information to console
+                        print(f"{course['title']} - {udemy_url} {'- Coupon: ' + coupon_code if coupon_code else ''}")
+                        print(f"Published: {course['publication_date']}")
+                        print("-" * 80)
+                    else:
+                        print(f"⚠️ Invalid or empty Udemy URL for: {course['title']} - Skipping")
+                        print("-" * 80)
+                        total_links += 1  # Count it in total but not valid
+
+                except Exception as e:
+                    if verbose or VERBOSE_DEBUG:
+                        print(f"Error processing course: {e}")
+                    continue
+
+            # Human-like delay between pages
+            if page_num < start_page + max_pages - 1:
+                page_delay = PAGE_TRANSITION_DELAY + random.uniform(-1, 2)  # 4-7 second delay
+                if VERBOSE_DEBUG:
+                    print(f"\nWaiting {page_delay:.1f} seconds before moving to page {page_num + 1}...\n")
+                time.sleep(page_delay)
+
+        if verbose or VERBOSE_DEBUG:
+            print(f"Total today's Udemy links processed: {total_links}")
+            print(f"Valid today's Udemy links found: {valid_links}")
+            print(f"Invalid/empty links: {total_links - valid_links}")
+
+        if valid_links > 0:
+            summary = f"✅ <b>Today's Free {category.capitalize().replace('-', ' ')} Courses Update</b>\n\nJust shared {valid_links} free Udemy courses published TODAY ({self.today_date})! Grab them while they last.\n\n#TodaysUdemy #FreshCourses #{category.capitalize().replace('-', '')} #PersonalDevelopment"
+            telegram_messages.append(summary)
+        else:
+            summary = f"ℹ️ <b>No New {category.capitalize().replace('-', ' ')} Courses Today</b>\n\nNo new free Udemy courses found for today ({self.today_date}). Check back later!\n\n#UdemyUpdate #{category.capitalize().replace('-', '')} #PersonalDevelopment"
+            telegram_messages.append(summary)
+
+        return all_courses, telegram_messages
+
+    def save_results(self, courses, json_filename="udemy_courses.json", csv_filename="udemy_courses.csv"):
+        with open(json_filename, 'w', encoding='utf-8') as f:
+            json.dump(courses, f, indent=2, ensure_ascii=False)
+
+        with open(csv_filename, 'w', newline='', encoding='utf-8') as f:
+            csv_writer = csv.writer(f)
+            header = ['Title', 'Description', 'Udemy URL', 'Coupon Code', 'Publication Date']
+            csv_writer.writerow(header)
+
+            for course in courses:
+                row = [
+                    course['title'],
+                    course['description'],
+                    course.get('udemy_url', 'N/A'),
+                    course.get('coupon_code', 'N/A'),
+                    course.get('publication_date', 'N/A')
+                ]
+                csv_writer.writerow(row)
+
+
+async def test_telegram_connection(bot_token, chat_id):
     try:
-        courses = scraper.scrape_category('development')
-        if not courses:
-            print("No courses found for daily post")
-            return
-
-        bot = Bot(token=TELEGRAM_BOT_TOKEN)
-        date = datetime.now().strftime("%B %d, %Y")
-        
-        header = f"""🔥 <b>DAILY FREE COURSES</b>
-📅 {date}
-
-🎓 {len(courses)} Development courses available!
-
-Created by Mohamed Asif - App Developer
-🌐 https://asifappdev.tech/"""
-
-        await bot.send_message(chat_id=TELEGRAM_CHAT_ID, text=header, parse_mode='HTML')
-
-        for i, course in enumerate(courses[:5], 1):
-            try:
-                title = course['title'][:70] + "..." if len(course['title']) > 70 else course['title']
-                desc = course['description'][:120] + "..." if len(course['description']) > 120 else course['description']
-                
-                coupon_text = ""
-                if course.get('coupon_code'):
-                    coupon_text = f"\n🎟️ <code>{course['coupon_code']}</code>"
-
-                msg = f"""🎓 <b>{title}</b>
-
-📝 {desc}
-
-🌐 <a href='{course['udemy_url']}'>Enroll Free</a>{coupon_text}
-
-#FreeCourse #Daily #{i}"""
-
-                await bot.send_message(
-                    chat_id=TELEGRAM_CHAT_ID,
-                    text=msg,
-                    parse_mode='HTML',
-                    disable_web_page_preview=True
-                )
-                await asyncio.sleep(2)
-            except Exception as e:
-                print(f"Error in daily post {i}: {e}")
-                continue
-                
+        bot = Bot(token=bot_token)
+        test_message = f"🧪 Testing Telegram connection - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+        await bot.send_message(
+            chat_id=chat_id,
+            text=test_message,
+            parse_mode='HTML',
+            connect_timeout=30.0,
+            read_timeout=30.0,
+            write_timeout=30.0
+        )
+        print("✅ Telegram connection successful!")
+        return True
     except Exception as e:
-        print(f"Error in scheduled post: {e}")
+        print(f"❌ Telegram connection test failed: {e}")
+        return False
+
+
+async def send_to_telegram_group(message, bot_token=TELEGRAM_BOT_TOKEN, chat_id=TELEGRAM_CHAT_ID, retry_count=0,
+                                 max_retries=3):
+    try:
+        bot = Bot(token=bot_token)
+        await bot.send_message(
+            chat_id=chat_id,
+            text=message,
+            parse_mode='HTML',
+            disable_web_page_preview=False,
+            # Increase timeouts to prevent timeouts on longer messages
+            connect_timeout=30.0,
+            read_timeout=30.0,
+            write_timeout=30.0
+        )
+        if VERBOSE_DEBUG:
+            print(f"Successfully sent message to Telegram")
+        return True
+    except TelegramError as e:
+        # Handle rate limiting or timeout errors
+        if "Too Many Requests" in str(e) or "Timed out" in str(e):
+            # Increase wait time exponentially with each retry
+            wait_time = 5 * (2 ** retry_count)
+            if retry_count < max_retries:
+                if VERBOSE_DEBUG:
+                    print(
+                        f"Telegram rate limit/timeout hit. Retrying in {wait_time} seconds... ({retry_count + 1}/{max_retries})")
+                await asyncio.sleep(wait_time)
+                return await send_to_telegram_group(message, bot_token, chat_id, retry_count + 1, max_retries)
+            else:
+                if VERBOSE_DEBUG:
+                    print(f"Failed after {max_retries} attempts: {e}")
+        else:
+            if VERBOSE_DEBUG:
+                print(f"Error sending to Telegram: {e}")
+        return False
+    except Exception as e:
+        if VERBOSE_DEBUG:
+            print(f"Unexpected error sending to Telegram: {e}")
+        return False
+
+
+async def run_telegram_operations(messages, bot_token=TELEGRAM_BOT_TOKEN, chat_id=TELEGRAM_CHAT_ID):
+    connection_ok = await test_telegram_connection(bot_token, chat_id)
+    if not connection_ok:
+        print("Telegram connection failed. Skipping message sending.")
+        return
+
+    print(f"Starting to send {len(messages)} messages to Telegram (with improved rate limiting)...")
+    success_count = 0
+    failure_count = 0
+    failed_messages = []
+
+    # Initial message sending with human-like randomized delays
+    for idx, msg in enumerate(messages, 1):
+        print(f"Sending message {idx}/{len(messages)}...")
+        success = await send_to_telegram_group(msg, bot_token, chat_id)
+        if success:
+            success_count += 1
+            # Human-like randomized delay between messages
+            delay = random.uniform(5.0, 8.0)
+            await asyncio.sleep(delay)
+        else:
+            failure_count += 1
+            failed_messages.append(msg)
+            # Wait longer after a failure before continuing
+            await asyncio.sleep(random.uniform(10.0, 15.0))
+
+    # Retry failed messages with higher delays
+    if failed_messages:
+        print(f"\nRetrying {len(failed_messages)} failed messages with increased delays...")
+        retry_success = 0
+
+        for idx, msg in enumerate(failed_messages, 1):
+            print(f"Retry attempt for message {idx}/{len(failed_messages)}...")
+            # Use a longer maximum wait time for retries
+            success = await send_to_telegram_group(msg, bot_token, chat_id, max_retries=4)
+            if success:
+                retry_success += 1
+                success_count += 1
+                failure_count -= 1
+                # Even longer delay between retry attempts
+                await asyncio.sleep(random.uniform(12.0, 18.0))
+            else:
+                # Wait substantially longer after a failed retry
+                await asyncio.sleep(random.uniform(15.0, 20.0))
+
+        print(f"Retry results: {retry_success}/{len(failed_messages)} messages recovered")
+
+    print(f"\nFinal results - Messages sent: {success_count}, Failed: {failure_count}")
+
+    if failure_count > 0:
+        print("Note: For the failed messages, you can try running the script again later "
+              "when Telegram's rate limits have reset.")
+
+
+def get_chat_id(chat_id_input):
+    if chat_id_input.startswith('-100'):
+        return chat_id_input
+    if chat_id_input.startswith('https://t.me/'):
+        username = chat_id_input.split('/')[-1]
+        return username
+    if chat_id_input.startswith('@'):
+        return chat_id_input
+    return chat_id_input
+
 
 async def main():
-    import sys
+    print("Starting Improved Udemy Coupon Scraper (TODAY ONLY) - PERSONAL DEVELOPMENT")
+    print("=========================================================================")
+    print(f"Today's date: {datetime.now().strftime('%B %d, %Y')}")
+    print("=========================================================================")
+
+    if TELEGRAM_BOT_TOKEN == "YOUR_BOT_TOKEN" or TELEGRAM_CHAT_ID == "YOUR_GROUP_ID":
+        print("ERROR: Please set your Telegram bot token and group ID in the script!")
+        return
+
+    chat_id = get_chat_id(TELEGRAM_CHAT_ID)
+    scraper = UdemyCouponScraper()
+
+    # CHANGED: Updated category to "personal-development"
+    category = "personal-development"
+
+    # Increased max pages to improve chances of finding today's courses
+    max_pages = 6
+    print(f"\nScraping the '{category}' category for {max_pages} pages, filtering for TODAY'S COURSES ONLY...")
+    print(f"Using human-like delays: {PAGE_TRANSITION_DELAY} seconds between pages, {COURSE_PROCESSING_DELAY} seconds between courses")
+    print("=========================================================================")
+
+    courses, telegram_messages = scraper.scrape_udemy_courses(
+        category=category,
+        max_pages=max_pages,
+        verbose=True  # More verbose output
+    )
+
+    valid_courses = [c for c in courses if 'udemy_url' in c and c['udemy_url'] and 'udemy.com/course/' in c['udemy_url']]
     
-    print("Starting application...")
-
-    if os.getenv('EVENT_NAME') == 'repository_dispatch':
-        print("Processing GitHub webhook...")
-        await process_github_webhook()
-    elif len(sys.argv) > 1 and sys.argv[1] == "bot":
-        print("Starting bot in interactive mode...")
-        
-        if not TELEGRAM_BOT_TOKEN:
-            print("❌ TELEGRAM_BOT_TOKEN not found!")
-            return
-            
-        app = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
-        
-        app.add_handler(CommandHandler("start", start_command))
-        app.add_handler(CommandHandler("help", start_command))
-        
-        for cat in CATEGORIES.keys():
-            app.add_handler(CommandHandler(cat, category_handler))
-        
-        app.add_handler(MessageHandler(filters.TEXT & filters.ChatType.PRIVATE, category_handler))
-
-        await app.initialize()
-        await app.start()
-        print("✅ Bot is running and ready!")
-        
-        await app.updater.start_polling()
-
-        import signal
-        stop = asyncio.Event()
-        for sig in (signal.SIGTERM, signal.SIGINT):
-            signal.signal(sig, lambda s, f: stop.set())
-        await stop.wait()
-
-        await app.updater.stop()
-        await app.stop()
-        await app.shutdown()
+    if valid_courses:
+        json_file = f"udemy_courses_{category}_today.json"
+        csv_file = f"udemy_courses_{category}_today.csv"
+        scraper.save_results(valid_courses, json_filename=json_file, csv_filename=csv_file)
+        print(f"\nSaved {len(valid_courses)} valid TODAY'S course data to {json_file} and {csv_file}")
     else:
-        print("Running scheduled group post...")
-        await scheduled_group_post()
+        print("\nNo valid TODAY'S courses found to save")
+
+    # Send messages to Telegram
+    if telegram_messages:
+        print(f"\nSending {len(telegram_messages)} messages to Telegram...")
+        await run_telegram_operations(telegram_messages, TELEGRAM_BOT_TOKEN, chat_id)
+        print("Completed sending messages to Telegram!")
+
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        print("\nScript interrupted by user")
+    except Exception as e:
+        print(f"Error: {e}")
