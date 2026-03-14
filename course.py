@@ -22,8 +22,8 @@ except ImportError:
     from telegram.error import TelegramError
 
 # Configuration
-TELEGRAM_BOT_TOKEN = "8092208949:AAHsHcBUJ9AGFD2h34qiHbGek6pR4mf99Zo"  # Get this from BotFather
-TELEGRAM_CHAT_ID = "-1002552787335"  # Replace with your group's numerical ID (not the URL)
+TELEGRAM_BOT_TOKEN = "7111801798:AAF_5EVvMyIUZgISrIqGHT4zRWgTjlWM2L8"  # Get this from BotFather
+TELEGRAM_CHAT_ID = "-4836448524"  # Replace with your group's numerical ID (not the URL)
 # Increased delay between pages to act more human-like
 PAGE_TRANSITION_DELAY = 5  # 5 seconds delay between pages
 # Increased delay between course processing
